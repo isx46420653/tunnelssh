@@ -7,8 +7,9 @@
 - [Exercici 15 - Ldap-remot i phpldapadmin-local](#Exemple-15-Ldap-remot-i-phpldapadmin-local)
   - [Ldap-remot a Amazon](#Desplegar-el-servei-ldap)
   - [Phpldapadmin local a l'aula o a casa](#Desplegar-el-servei-phpldapadmin)
-- [Ejercicio16: Ldap-local i phpldapadmin-remot](#ejercicio16-ldap-local-i-phpldapadmin-remot)
-  - [Engegar ldap i phpldapadmin i que tinguin connectivitat](#engegar-ldap-i-phpldapadmin-i-que-tinguin-connectivitat)
+- [Exercici 16 - Ldap-local i phpldapadmin-remot](#Exemple-16.-Ldap-local-i-phpldapadmin-remot)
+  - [Túnel Invers](#Obrim-el-túnel-invers)
+  - [Prova del correcte funcionament](#Comprovem)
 
 ## Exemple-15 Ldap-remot i phpldapadmin-local
 
@@ -124,3 +125,112 @@ password:'secret'
 ### Ja tenim accés
 
 ![Imatge](./aux/phpldapadmin.png)
+
+## Exemple-16. Ldap-local i phpldapadmin-remot
+
+Obrir localment un ldap al host. Engegar al AWS un container phpldapadmin que usa el ldap del host de l’aula. Visualitzar localment al host de l’aula el phpldapadmin del container de AWS EC2. Ahí ez nà.
+
+### Engegar ldap i phpldapadmin i que tinguin connectivitat:
+
+- Engegar localment el servei ldap al host-local de l’aula.
+
+```bash
+# Arranquem el servidor LDAP mapejant el port 389
+[Pau@portatil]$ docker run --rm --name ldapserver.edt.org -h ldapserver.edt.org -p 389:389 --net mynet -d isx46420653/k19:ldapserver
+```
+
+-  Obrir un túnel invers SSH en la AMI de AWS EC2 (host-destí) lligat al servei ldap del host-local de l’aula.
+
+```bash
+# Cal modificar la directiva GatewayPorts del servidor SSHD per a fer bind a diferents interfícies
+[root@ip-172-31-84-39 ~]$ vi /etc/ssh/sshd_config
+. . .
+
+#AllowAgentForwarding yes
+#AllowTcpForwarding yes
+GatewayPorts yes
+X11Forwarding yes
+#X11DisplayOffset 10
+#X11UseLocalhost yes
+#PermitTTY yes
+
+. . .
+```
+
+**IMPORTANT**
+
+Cal reiniciar el servei sshd per a que s'apliquin els canvis
+
+```bash
+[root@ip-172-31-84-39 ~]$ systemctl restart sshd
+```
+
+### Obrim el túnel invers
+
+```bash
+# Si mapejem el port, és més còmode
+[Pau@portatil]$ ssh -i new_key.pem -R 172.18.0.1:50000:localhost:389 fedora@54.224.177.131
+
+# Si no l'hem mapejat hem de posar la direcció del contenidor local LDAP
+[Pau@portatil]$ ssh -i new_key.pem -R 172.18.0.1:50000:172.19.0.2:389 fedora@54.224.177.131
+```
+
+-  Engegar el servei phpldapadmin en un container Docker dins de la màquina AMI. cal configurar-lo perquè connecti al servidor ldap indicant-li la ip de la AMI i el port obert per el túnel SSH.
+
+```bash
+
+# Ho fem interactivament per a poder configurar-lo
+[root@ip-172-31-84-39 ~]$ docker run --rm --name phpldapadmin -h phpldapadmin --net mynet -it isx46420653/phpldapadmin /bin/bash
+
+# Ha de buscar al servidor LDAP a la seva "porta de sortida" de la xarxa Docker. El port el definim al 50000
+[root@phpldapadmin phpldapadmin]$ vi config.php
+
+    $servers->setValue('server','host','172.18.0.1');
+
+    $servers->setValue('server','port',50000);
+
+    $servers->setValue('server','base',array('dc=edt,dc=org'));
+
+[root@phpldapadmin phpldapadmin]$ bash startup.sh
+```
+
+-  *nota* atenció al binding que fa ssh dels ports dels túnels SSH (per defecte són
+  només al localhost).
+
+Ara cal accedir des del host de l’aula al port 8080 del phpldapadmin per visualitzar-lo. Per fer-ho cal:
+
+- en la AMI configutat el /etc/hosts per poder accedir per nom de host (per exemple php) al port apropiat del servei phpldapadmin.
+
+```bash
+[root@ip-172-31-84-39 ~]$ echo "172.18.0.2 php" >> /etc/hosts
+```
+
+- establir un túnel directe del host de l’aula (host-local) al host-remot phpldapadmin passant pel host-destí (la AMI).
+
+```bash
+# Creem el túnel directe cap al host remot passant per el host destí (AMI)
+[Pau@portatil]$ ssh -i new_key.pem -L 8080:php:80 fedora@54.224.177.131
+```
+
+-  Ara amb un navegador ja podem visualitzar localment des del host de l’aula el phpldapadmin connectant al pot directe acabat de crear.
+
+```bash
+[Pau@portatil]$ firefox localhost:8080/phpldapadmin
+```
+
+- **nota** atenció al binding que fa ssh dels ports dels túnels SSH (per defecte són
+      només al localhost).
+
+
+```bash
+# Accedim amb firefox
+[Pau@portatil]$ firefox localhost:8080/phpldapadmin
+
+# Fem login:
+user:'cn=Manager,dc=edt,dc=org'
+password:'secret'
+```
+
+### Comprovem
+
+![Imatge](./aux/phpldapadmin_amazon.png)
